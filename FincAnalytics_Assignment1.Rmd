@@ -1,0 +1,388 @@
+---
+title: "Financial Analytics"
+output: html_document
+date: "2025-02-17"
+---
+
+```{r load-libraries, message=FALSE, warning=FALSE}
+# Load necessary libraries
+library(quantmod)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+## 1. Retrieve price data for 5 stocks (2012-2022)
+stocks <- c("AGM", "BABA", "HOOD", "DKNG", "NFLX")  
+getSymbols(stocks, from = "2012-01-01", to = "2022-12-31", src = "yahoo")
+
+# Convert xts objects to data frames with a Date column
+AGM_df <- data.frame(Date = index(AGM), coredata(AGM))
+BABA_df <- data.frame(Date = index(BABA), coredata(BABA))
+HOOD_df <- data.frame(Date = index(HOOD), coredata(HOOD))
+DKNG_df <- data.frame(Date = index(DKNG), coredata(DKNG))
+NFLX_df <- data.frame(Date = index(NFLX), coredata(NFLX))
+
+# Ensure dates are sorted (oldest to newest)
+AGM_df <- AGM_df[order(AGM_df$Date), ]
+BABA_df <- BABA_df[order(BABA_df$Date), ]
+HOOD_df <- HOOD_df[order(HOOD_df$Date), ]
+DKNG_df <- DKNG_df[order(DKNG_df$Date), ]
+NFLX_df <- NFLX_df[order(NFLX_df$Date), ]
+
+# Quick check
+head(NFLX_df)
+## 2. Data cleaning:
+# Check the class of key columns (example for NFLX)
+print(str(NFLX_df))
+
+## 3. Calculate daily arithmetic returns for each stock:
+#     Return_t = (P_t - P_t-1) / P_t-1
+
+# Extract the Adjusted closing prices
+AGM_adj_close  <- AGM_df$AGM.Adjusted
+BABA_adj_close <- BABA_df$BABA.Adjusted
+HOOD_adj_close <- HOOD_df$HOOD.Adjusted
+DKNG_adj_close <- DKNG_df$DKNG.Adjusted
+NFLX_adj_close <- NFLX_df$NFLX.Adjusted
+
+# Calculate daily returns (first value will be NA)
+AGM_returns <- c(NA, diff(AGM_adj_close) / head(AGM_adj_close, -1))
+BABA_returns <- c(NA, diff(BABA_adj_close) / head(BABA_adj_close, -1))
+HOOD_returns <- c(NA, diff(HOOD_adj_close) / head(HOOD_adj_close, -1))
+DKNG_returns <- c(NA, diff(DKNG_adj_close) / head(DKNG_adj_close, -1))
+NFLX_returns <- c(NA, diff(NFLX_adj_close) / head(NFLX_adj_close, -1))
+
+# Inspecting one of the returns vectors
+head(HOOD_returns)
+# Add the daily returns and create month and year variables for each data frame.
+# We use mutate() and format() to extract Year and Month.
+
+AGM_df <- AGM_df %>% 
+  mutate(Return = AGM_returns,
+         Year = as.integer(format(Date, "%Y")),
+         Month = format(Date, "%m")) %>%
+  filter(!is.na(Return))  # Remove first row with NA return
+
+BABA_df <- BABA_df %>% 
+  mutate(Return = BABA_returns,
+         Year = as.integer(format(Date, "%Y")),
+         Month = format(Date, "%m")) %>%
+  filter(!is.na(Return))
+
+HOOD_df <- HOOD_df %>% 
+  mutate(Return = HOOD_returns,
+         Year = as.integer(format(Date, "%Y")),
+         Month = format(Date, "%m")) %>%
+  filter(!is.na(Return))
+
+DKNG_df <- DKNG_df %>% 
+  mutate(Return = DKNG_returns,
+         Year = as.integer(format(Date, "%Y")),
+         Month = format(Date, "%m")) %>%
+  filter(!is.na(Return))
+
+NFLX_df <- NFLX_df %>% 
+  mutate(Return = NFLX_returns,
+         Year = as.integer(format(Date, "%Y")),
+         Month = format(Date, "%m")) %>%
+  filter(!is.na(Return))
+## 4 & 5. Calculate monthly average returns and identify the three months
+# with the highest and lowest monthly means for each year.
+
+# First, compute monthly average returns for each stock.
+AGM_monthly <- AGM_df %>%
+  group_by(Year, Month) %>%
+  summarise(Monthly_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+BABA_monthly <- BABA_df %>%
+  group_by(Year, Month) %>%
+  summarise(Monthly_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+HOOD_monthly <- HOOD_df %>%
+  group_by(Year, Month) %>%
+  summarise(Monthly_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+DKNG_monthly <- DKNG_df %>%
+  group_by(Year, Month) %>%
+  summarise(Monthly_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+NFLX_monthly <- NFLX_df %>%
+  group_by(Year, Month) %>%
+  summarise(Monthly_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+# Define a function to get the top three and bottom three months per year
+get_top_bottom <- function(monthly_df) {
+  monthly_df %>% 
+    group_by(Year) %>%
+    summarise(
+      Top3_Months = list(slice_max(., order_by = Monthly_Return, n = 3)),
+      Bottom3_Months = list(slice_min(., order_by = Monthly_Return, n = 3))
+    ) %>% 
+    ungroup()
+}
+
+# Apply the function to each stock's monthly data:
+AGM_summary  <- get_top_bottom(AGM_monthly)
+BABA_summary <- get_top_bottom(BABA_monthly)
+HOOD_summary <- get_top_bottom(HOOD_monthly)
+DKNG_summary <- get_top_bottom(DKNG_monthly)
+NFLX_summary <- get_top_bottom(NFLX_monthly)
+
+# For example, view the summary for AGM:
+print(AGM_summary)
+
+##############################################################################
+# 6. Calculate the return (mean) and risk (sd) of each stock by year, then
+#    find the year with the highest and lowest average return.
+#    (Data.table approach with inline user-defined function)
+
+library(data.table)
+
+AGM_dt <- as.data.table(AGM_df)
+BABA_dt  <- as.data.table(BABA_df)
+HOOD_dt  <- as.data.table(HOOD_df)
+DKNG_dt  <- as.data.table(DKNG_df)
+NFLX_dt  <- as.data.table(NFLX_df)
+
+# Calculating mean and SD of returns by year
+AGM_stats <- AGM_dt[, .(
+  mean_return = mean(Return, na.rm = TRUE),
+  sd_return   = sd(Return, na.rm = TRUE)
+), by = Year]
+
+# Convert data frames to data.tables (if not done already)
+AGM_dt   <- as.data.table(AGM_df)
+BABA_dt  <- as.data.table(BABA_df)
+HOOD_dt  <- as.data.table(HOOD_df)
+DKNG_dt  <- as.data.table(DKNG_df)
+NFLX_dt  <- as.data.table(NFLX_df)
+
+# Computing the mean and standard deviation of Return by Year for each dataset
+AGM_stats  <- AGM_dt[, .(mean_return = mean(Return, na.rm = TRUE),
+                          sd_return   = sd(Return, na.rm = TRUE)), by = Year]
+BABA_stats <- BABA_dt[, .(mean_return = mean(Return, na.rm = TRUE),
+                          sd_return   = sd(Return, na.rm = TRUE)), by = Year]
+HOOD_stats <- HOOD_dt[, .(mean_return = mean(Return, na.rm = TRUE),
+                          sd_return   = sd(Return, na.rm = TRUE)), by = Year]
+DKNG_stats <- DKNG_dt[, .(mean_return = mean(Return, na.rm = TRUE),
+                          sd_return   = sd(Return, na.rm = TRUE)), by = Year]
+NFLX_stats <- NFLX_dt[, .(mean_return = mean(Return, na.rm = TRUE),
+                          sd_return   = sd(Return, na.rm = TRUE)), by = Year]
+
+# For AGM
+AGM_highest <- AGM_stats[which.max(mean_return)]
+AGM_lowest  <- AGM_stats[which.min(mean_return)]
+AGM_dt[, lapply(.SD, function(x) c(
+  mean_x = mean(x, na.rm = TRUE),
+  sd_x   = sd(x, na.rm = TRUE)
+)), by = Year, .SDcols = "Return"]
+
+# For BABA
+BABA_highest <- BABA_stats[which.max(mean_return)]
+BABA_lowest  <- BABA_stats[which.min(mean_return)]
+BABA_dt[, lapply(.SD, function(x) c(
+  mean_x = mean(x, na.rm = TRUE),
+  sd_x   = sd(x, na.rm = TRUE)
+)), by = Year, .SDcols = "Return"]
+
+# For HOOD
+HOOD_highest <- HOOD_stats[which.max(mean_return)]
+HOOD_lowest  <- HOOD_stats[which.min(mean_return)]
+HOOD_dt[, lapply(.SD, function(x) c(
+  mean_x = mean(x, na.rm = TRUE),
+  sd_x   = sd(x, na.rm = TRUE)
+)), by = Year, .SDcols = "Return"]
+
+# For DKNG
+DKNG_highest <- DKNG_stats[which.max(mean_return)]
+DKNG_lowest  <- DKNG_stats[which.min(mean_return)]
+DKNG_dt[, lapply(.SD, function(x) c(
+  mean_x = mean(x, na.rm = TRUE),
+  sd_x   = sd(x, na.rm = TRUE)
+)), by = Year, .SDcols = "Return"]
+
+# For NFLX
+NFLX_highest <- NFLX_stats[which.max(mean_return)]
+NFLX_lowest  <- NFLX_stats[which.min(mean_return)]
+NFLX_dt[, lapply(.SD, function(x) c(
+  mean_x = mean(x, na.rm = TRUE),
+  sd_x   = sd(x, na.rm = TRUE)
+)), by = Year, .SDcols = "Return"]
+
+##############################################################################
+
+##############################################################################
+# 7. Imagine your money is equally invested in these 5 stocks.
+#    The annual return for the portfolio is simply the average of the annual
+#    mean returns of the 5 stocks. Then check if your 10% target is met.
+
+library(data.table)
+
+# Assume that AGM_stats, BABA_stats, HOOD_stats, DKNG_stats, and NFLX_stats
+# have been computed previously with columns: Year and mean_return.
+
+# Create a table with Year and each stock's annual mean return
+portfolio_returns <- data.table(
+  Year = AGM_stats$Year,
+  AGM   = AGM_stats$mean_return,
+  BABA  = BABA_stats$mean_return,
+  HOOD  = HOOD_stats$mean_return,
+  DKNG  = DKNG_stats$mean_return,
+  NFLX  = NFLX_stats$mean_return
+)
+
+# Calculate the portfolio's annual return as the average of the 5 stocks' returns
+portfolio_returns[, Portfolio_Annual_Return := rowMeans(.SD), 
+                  .SDcols = c("AGM", "BABA", "HOOD", "DKNG", "NFLX")]
+
+# View the annual portfolio returns
+print(portfolio_returns)
+
+# Compute the overall average annual portfolio return and convert to percentage
+avg_portfolio_return <- mean(portfolio_returns$Portfolio_Annual_Return, na.rm = TRUE)
+cat("Average Portfolio Annual Return:", avg_portfolio_return * 100*252, "%", "\n")
+
+```
+If we are aiming for a 10% annual return, we should not consider the portfolio composed with the chosen stocks.
+``` {r comparing with S&P500, message=FALSE, warning=FALSE}
+## Comparing the return to the SPX500 average over the same period
+
+# Retrieving SPX500 (S&P 500) data with auto.assign = FALSE
+spx_data <- getSymbols("^GSPC", from = "2012-01-01", to = "2022-12-31", 
+                        src = "yahoo", auto.assign = FALSE)
+
+spx_df <- data.frame(Date = index(spx_data), coredata(spx_data))
+spx_df <- spx_df[order(spx_df$Date), ]
+
+# Calculate daily returns using Adjusted close prices
+spx_returns <- c(NA, diff(spx_df$GSPC.Adjusted) / head(spx_df$GSPC.Adjusted, -1))
+spx_df <- spx_df %>% 
+  mutate(Return = spx_returns,
+         Year = as.integer(format(Date, "%Y"))) %>% 
+  filter(!is.na(Return))
+
+# Compute annual mean returns
+spx_annual <- spx_df %>%
+  group_by(Year) %>%
+  summarise(Annual_Return = mean(Return, na.rm = TRUE)) %>%
+  ungroup()
+
+# Calculate the overall average annual return
+avg_spx_return <- mean(spx_annual$Annual_Return, na.rm = TRUE)
+
+approx_annual_return <- avg_spx_return* 252  # converting percent to decimal and multiplying
+cat("Approximate Annual Return:", approx_annual_return * 100, "%", "\n")
+
+```
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+
+# === 1. Compute monthly total volume for each stock (ALL months) ===
+
+AGM_volume_all <- AGM_df %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Volume = sum(AGM.Volume, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Stock = "AGM")
+
+BABA_volume_all <- BABA_df %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Volume = sum(BABA.Volume, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Stock = "BABA")
+
+HOOD_volume_all <- HOOD_df %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Volume = sum(HOOD.Volume, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Stock = "HOOD")
+
+DKNG_volume_all <- DKNG_df %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Volume = sum(DKNG.Volume, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Stock = "DKNG")
+
+NFLX_volume_all <- NFLX_df %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Volume = sum(NFLX.Volume, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Stock = "NFLX")
+
+combined_volume_all <- bind_rows(AGM_volume_all, BABA_volume_all, HOOD_volume_all,
+                                 DKNG_volume_all, NFLX_volume_all)
+
+# === 2. Combine monthly returns for each stock (ALL months) ===
+
+AGM_returns_all <- AGM_monthly %>%
+  mutate(Stock = "AGM")
+
+BABA_returns_all <- BABA_monthly %>%
+  mutate(Stock = "BABA")
+
+HOOD_returns_all <- HOOD_monthly %>%
+  mutate(Stock = "HOOD")
+
+DKNG_returns_all <- DKNG_monthly %>%
+  mutate(Stock = "DKNG")
+
+NFLX_returns_all <- NFLX_monthly %>%
+  mutate(Stock = "NFLX")
+
+combined_returns_all <- bind_rows(AGM_returns_all, BABA_returns_all, HOOD_returns_all,
+                                  DKNG_returns_all, NFLX_returns_all)
+
+# === 3. Merge returns and volume data by Year, Month, and Stock ===
+
+all_data <- inner_join(combined_returns_all, combined_volume_all,
+                       by = c("Year", "Month", "Stock"))
+
+# === 4. Calculate overall and per-stock correlations ===
+
+# Overall correlation between all monthly returns and trading volumes
+overall_corr_all <- cor(all_data$Monthly_Return, all_data$Total_Volume, use = "complete.obs")
+cat("Overall correlation between all monthly returns and trading volume:", overall_corr_all, "\n")
+
+# Per-stock correlation
+per_stock_corr_all <- all_data %>%
+  group_by(Stock) %>%
+  summarise(correlation = cor(Monthly_Return, Total_Volume, use = "complete.obs"))
+
+print(per_stock_corr_all)
+
+# === 5. Create a summary table with average monthly return and correlation ===
+
+stock_summary <- combined_returns_all %>%
+  group_by(Stock) %>%
+  summarise(avg_return = mean(Monthly_Return, na.rm = TRUE)) %>%
+  inner_join(per_stock_corr_all, by = "Stock") %>%
+  ungroup()
+
+print(stock_summary)
+
+# === 6. Select top 3 and bottom 3 stocks by average monthly returns ===
+
+# Top 3 stocks (highest average monthly return)
+top3_stocks <- stock_summary %>%
+  arrange(desc(avg_return)) %>%
+  slice_head(n = 3)
+
+cat("Top 3 stocks by average monthly returns:\n")
+print(top3_stocks)
+
+# Bottom 3 stocks (lowest average monthly return)
+bottom3_stocks <- stock_summary %>%
+  arrange(avg_return) %>%
+  slice_head(n = 3)
+
+cat("Bottom 3 stocks by average monthly returns:\n")
+print(bottom3_stocks)
+
+
+```
+low correlation in this case
